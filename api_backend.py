@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 
 import time
+import pyperclip
 
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.chrome.options import Options
@@ -17,6 +18,9 @@ import os
 import chrome_handler
 import helper_funcs
 import sys
+import os
+current_file_path = os.getcwd()
+
 
 # current file path
 current_file_path = os.path.dirname(os.path.realpath(__file__))
@@ -54,31 +58,34 @@ def make_gpt_request(text):
         # send button
         send_btn_xpath = "//*[@data-testid='send-button']"
         
-        # Wait until the button with data-testid="send-button" is present
+        # Wait until the send button is clickable
         WebDriverWait(driver, 120).until(
-            EC.presence_of_element_located((By.XPATH, send_btn_xpath))
+            EC.element_to_be_clickable((By.XPATH, send_btn_xpath))
         )
         
         send_btn = helper_fn.find_element(send_btn_xpath)
         time.sleep(1)
         send_btn.click()
 
-    helper_fn.wait_for_x_seconds(5)
-    # waiting for response
-    response_xpath_light = "//*[@class='markdown prose w-full break-words dark:prose-invert light']" # for light mode
-    response_xpath_dark = "//*[@class='markdown prose w-full break-words dark:prose-invert dark']" # for dark mode
-    regenrate_xpath = '//*[@id="__next"]/div[1]/div[2]/main/div[1]/div[2]/div[1]/div/form/div/div[2]/div/div/button'
-    
-    # Change this line to wait for send button instead of regenrate button
-    WebDriverWait(driver, 120).until(
-        EC.presence_of_element_located((By.XPATH, send_btn_xpath))
-    )
+    # Give ChatGPT some time to start processing
+    time.sleep(5)
 
-    response_xpath = response_xpath_dark if helper_fn.is_element_present(response_xpath_dark) else response_xpath_light # check for dark mode or light mode
-    if helper_fn.is_element_present(response_xpath):
-        helper_fn.wait_for_x_seconds(1)
-        response = helper_fn.find_elements(response_xpath)[-1]
-        return response.text # will return all the textual information under that particular xpath
+    # Instead of waiting for the send button, wait for the response container
+    response_container_xpath = "//div[contains(@class, 'markdown prose w-full break-words')]"
+    WebDriverWait(driver, 120).until(
+        EC.presence_of_element_located((By.XPATH, response_container_xpath))
+    )
+    
+    # Optionally, wait for the typing indicator to disappear
+    typing_indicator_xpath = "//div[contains(@class, 'result-streaming')]"
+    WebDriverWait(driver, 180).until_not(
+        EC.presence_of_element_located((By.XPATH, typing_indicator_xpath))
+    )
+    
+    # Now, get the latest response
+    helper_fn.wait_for_x_seconds(1)
+    response = helper_fn.find_elements(response_container_xpath)[-1]
+    return response.text
 
 def make_gpt_request_and_copy(text):
     """
@@ -241,7 +248,7 @@ def make_gpt_request_and_copy(text):
                     raise
             
             time.sleep(1)
-            import pyperclip
+            
             clipboard_content = pyperclip.paste()
             print("✓ Content successfully copied")
             return clipboard_content
@@ -302,6 +309,119 @@ def make_gpt_request_and_copy(text):
         print(f"❌ Process failed: {str(e)}")
         return f"Error occurred: {str(e)}"
 
+def upload_file_and_send_prompt(pdf_path, prompt_text):
+    """
+    Uploads a file (e.g., PDF) to the ChatGPT interface and sends a prompt.
+    
+    Args:
+        pdf_path (str): The full path to the PDF file to be uploaded.
+        prompt_text (str): The prompt text to send after uploading.
+    
+    Returns:
+        str: The response text from ChatGPT.
+    """
+    try:
+        print("Starting file upload process...")
+        
+        # Step 1: Locate the file input element and upload the file.
+        file_input_xpath = "//input[@type='file']"
+        helper_fn.wait_for_element(file_input_xpath)
+        
+        if helper_fn.is_element_present(file_input_xpath):
+            file_input = helper_fn.find_element(file_input_xpath)
+            file_input.send_keys(pdf_path)
+            print("✅ File uploaded.")
+        else:
+            raise Exception("File input element not found")
+        
+        # Optional wait to let the upload process settle.
+        time.sleep(1)
+        
+        # Step 2: Locate the text input area and send the prompt.
+        text_area_xpath = "//*[@id='prompt-textarea']"
+        helper_fn.wait_for_element(text_area_xpath)
+        
+        if helper_fn.is_element_present(text_area_xpath):
+            text_area = helper_fn.find_element(text_area_xpath)
+            text_area.send_keys(prompt_text)
+            print("✅ Prompt text entered.")
+        else:
+            raise Exception("Prompt text area not found")
+        
+        # Step 3: Locate and click the send button.
+        send_btn_xpath = "//*[@data-testid='send-button']"
+        WebDriverWait(driver, 30).until(
+            EC.element_to_be_clickable((By.XPATH, send_btn_xpath))
+        )
+        send_button = helper_fn.find_element(send_btn_xpath)
+        time.sleep(1)
+        send_button.click()
+        print("✅ Send button clicked.")
+        
+        # Step 4: Wait for ChatGPT's response.
+        response_container_xpath = "//div[contains(@class, 'markdown prose w-full break-words')]"
+        WebDriverWait(driver, 120).until(
+            EC.presence_of_element_located((By.XPATH, response_container_xpath))
+        )
+        
+        # Wait until the typing indicator disappears.
+        typing_indicator_xpath = "//div[contains(@class, 'result-streaming')]"
+        WebDriverWait(driver, 180).until_not(
+            EC.presence_of_element_located((By.XPATH, typing_indicator_xpath))
+        )
+        
+        time.sleep(1)  # Optional pause for UI stabilization.
+        response = helper_fn.find_elements(response_container_xpath)[-1]
+        return response.text
+
+    except Exception as e:
+        print(f"❌ File upload process failed: {str(e)}")
+        return f"Error occurred: {str(e)}"
+
+def upload_file(pdf_path):
+    """
+    Uploads a file (e.g., a PDF) to the ChatGPT interface.
+    This should be called only once; subsequent prompts will be in the same session.
+    
+    Args:
+        pdf_path (str): The full path to the PDF file to be uploaded.
+    
+    Returns:
+        str: A status message.
+    """
+    try:
+        # Clean and validate pdf_path
+        pdf_path = pdf_path.strip()
+        if not pdf_path:
+            raise Exception("Provided file path is empty!")
+        if not os.path.exists(pdf_path):
+            raise Exception(f"File does not exist: {pdf_path}")
+            
+        print("Starting file upload process...")
+        file_input_xpath = "//input[@type='file']"
+        helper_fn.wait_for_element(file_input_xpath)
+        
+        if helper_fn.is_element_present(file_input_xpath):
+            file_input = helper_fn.find_element(file_input_xpath)
+            
+            # Optionally, unhide the element if it is hidden:
+            driver.execute_script("arguments[0].style.display = 'block';", file_input)
+            
+            # Print debug info
+            print("Found element with tag:", file_input.tag_name)
+            print("Input type:", file_input.get_attribute("type"))
+            
+            file_input.send_keys(pdf_path)
+            print("✅ File uploaded.")
+        else:
+            raise Exception("File input element not found")
+        time.sleep(1)
+        return "File upload successful."
+    except Exception as e:
+        error_msg = f"❌ File upload failed: {str(e)}"
+        print(error_msg)
+        return error_msg
+
 def stop_chat_gpt():
     driver.close()
     driver.quit()
@@ -313,11 +433,18 @@ if __name__ == "__main__":
     
     try:
         while True:
-            req = input("Enter text: ")
+            req = input("Enter command: ")
             if req == "!quit":
                 break
-            resp = make_gpt_request_and_copy(req)
-            print(resp)
+            elif req == "!upload":
+                # Ask for the PDF file path at runtime
+                pdf_path = input("Enter the full path to your PDF file: ")
+                prompt_text = "Please analyze the attached PDF file."
+                resp = upload_file_and_send_prompt(pdf_path, prompt_text)
+                print("Response:", resp)
+            else:
+                resp = make_gpt_request_and_copy(req)
+                print("Response:", resp)
     except KeyboardInterrupt:
         print("KeyboardInterrupt detected, exiting...")
     finally:
